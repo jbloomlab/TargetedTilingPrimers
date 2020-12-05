@@ -57,7 +57,7 @@ def ReverseComplement(seq):
     return ''.join(rc)
 
 
-def CreateMutForOligosVarLength(seq, mutations_csv, primerlength, prefix, maxprimertm, minprimertm, maxlength, minlength):
+def CreateMutForOligosVarLength(seq, mutations_csv, codon_frequency_csv, primerlength, prefix, maxprimertm, minprimertm, maxlength, minlength):
     """Creates oligos to tile a gene and introduce specified amino acid mutations at each site.
 
     *seq* : sequence of the gene. The gene itself should be upper case,
@@ -72,6 +72,15 @@ def CreateMutForOligosVarLength(seq, mutations_csv, primerlength, prefix, maxpri
     to make at that site. Each site can have mulitple mutants, or none. The site
     number should denote the number of the codon in the uppercase gene, with the
     start codon being 1.
+
+    *codon_frequency_csv* :  csv file containing a table with codon frequencies
+    used to determine which codons sites will be mutated to. The table should
+    have the columns 'aa', 'codon', and 'frequency'. Each row should have one
+    single letter amino acid in 'aa', one codon corresponding to that amino acid
+    in 'codon', and the frequency of that codon in 'frequency'. The script uses
+    the codon with the highest frequency to replace the codon at a site to
+    make mutations. Codon frequency tables for different organisms can be found
+    [here](https://www.kazusa.or.jp/codon/).
 
     *primerlength* : length of primers. Must be an odd number, so that equal length
     flanking on each side.
@@ -122,7 +131,7 @@ def CreateMutForOligosVarLength(seq, mutations_csv, primerlength, prefix, maxpri
     if n - len(upperseq) - seq.index(upperseq) + (len(upperseq) - (lastcodon - 1) * 3) < initial_flanklength:
         raise ValueError("not enough 3' flanking nucleotides")
     # Read in the codon frequency table, make dict for back translating
-    df = pd.read_csv('codon_frequencies.csv')
+    df = pd.read_csv(codon_frequency_csv)
     aas = df['aa'].tolist()
     codons = df['codon'].tolist()
     frequencies = df['frequency'].tolist()
@@ -134,11 +143,9 @@ def CreateMutForOligosVarLength(seq, mutations_csv, primerlength, prefix, maxpri
         else:
             back_t_dict[aas[i]][frequencies[i]] = codon
     # Iterate through the codons and make the specific primers, with most
-    # frequent codon
+    # frequent codon. This could be changed later to have random option
     primers = []
     for icodon in range(ncodons):
-        # Determine what the insert should be for the codon
-        # Replace ambiguous_codon with codon insert later
         codon_inserts = []
         if icodon + 1 in mutations_dict:
             for mutation in mutations_dict[icodon + 1]:
@@ -228,8 +235,12 @@ def main():
     if not os.path.isfile(mutations_csv):
         raise IOError(f"Cannot find mutations_csv {mutations_csv}")
 
+    codon_frequency_csv = args['codon_frequency_csv']
+    if not os.path.isfile(codon_frequency_csv):
+        raise IOError(f"Cannot find mutatcodon_frequency_csvions_csv {codon_frequency_csv}")
+
     # Design forward mutation primers
-    mutforprimers = CreateMutForOligosVarLength(sequence, mutations_csv, primerlength, primerprefix, args['maxprimertm'], args['minprimertm'], args['maxlength'], args['minlength'])
+    mutforprimers = CreateMutForOligosVarLength(sequence, mutations_csv, codon_frequency_csv, primerlength, primerprefix, args['maxprimertm'], args['minprimertm'], args['maxlength'], args['minlength'])
     print("Designed %d mutation forward primers." % len(mutforprimers))
 
     # Design reverse mutation primers
