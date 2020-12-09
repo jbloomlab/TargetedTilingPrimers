@@ -8,9 +8,9 @@ This repository contains information and a Python script for designing primers t
 Codon mutagenesis can be used to create mutant libraries of a gene with all possible codon mutations.
 Such libraries are useful for experiments such as [deep mutational scanning](https://www.ncbi.nlm.nih.gov/pubmed/25075907) or [mutational antigenic profiling](http://journals.plos.org/plospathogens/article?id=10.1371/journal.ppat.1006271)
 
-A [script in a separate repository](https://github.com/jbloomlab/CodonTilingPrimers) can be used to generate random mutations at each codon in a gene. This protocol randomly mutates each codon to all other possible codons. This protocol and papers using it are also described in that repository.
+A [script in a separate repository](https://github.com/jbloomlab/CodonTilingPrimers) can be used to generate random mutations at each codon in a gene using degenerate primers. This protocol randomly mutates each codon to all other possible codons. This protocol and papers using it are also described in that repository.
 
-Rather than generating mutant libraries with all possible codon mutations at every site in a gene, the script in this repository can be used to generate primers that will result in specific desired mutations at each site in a gene. In this way, a mutant library can be generated which has fewer lethal mutations than random codon mutagenesis.
+Rather than generating mutant libraries with all possible codon mutations at every site in a gene using degenerate primers, the script in this repository can be used to generate primers that will result in specific desired mutations at each site in a gene. In this way, a mutant library can be generated which has fewer lethal mutations than all possible amino acid mutations.
 
 ## Running the script to design primers
 
@@ -20,7 +20,7 @@ The [create_primers.py](create_primers.py) Python script can be used to create p
 
 *seq* : Text file containing the sequence of the gene. The gene itself should be upper case, including the start and stop codons. Any flanking regions should be lower case. There must be >= (primerlength - 3) / 2.0 nucleotides before the first codon mutagenized and after the last codon mutagenized, otherwise there would not be enough flanking nucleotides for a primer to mutate those codons.
 
-*mutations_csv* : csv file containing a table with the mutations the primers will make to seq. The table should have a column, 'site', with site numbers, and a column, 'mutant', with the single letter amino acid mutant to make at that site. Each site can have multiple mutants, or none. The site number should denote the number of the codon in the uppercase gene, with the start codon being 1.
+*mutations_csv* : csv file containing a table with the mutations the primers will make to seq. The table should have a column, 'site', with site numbers, and a column, 'mutant', with the single letter amino acid mutant to make at that site. Each site can have multiple mutants, or none. The site number should denote the number of the codon in the uppercase gene, with the start codon being 1. If you want multiple mutations at the same site, there should be a separate row for each mutation.
 
 *codon_frequency_csv* : csv file containing a table with codon frequencies used to determine which codons sites will be mutated to. The table should have the columns 'aa', 'codon', and 'frequency'. Each row should have one single letter amino acid in 'aa', one codon corresponding to that amino acid in 'codon', and the frequency of that codon in 'frequency'. The script uses the codon with the highest frequency to replace the codon at a site to make mutations. Codon frequency tables for different organisms can be found [here](https://www.kazusa.or.jp/codon/).
 
