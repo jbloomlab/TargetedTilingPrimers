@@ -38,6 +38,7 @@ It is possible to vary salt concentration and other addatives if needed.
 
 import os
 import math
+import random
 import argparse
 
 import pandas as pd
@@ -76,12 +77,14 @@ def Parser():
     parser.add_argument('mutations_csv',
                         help="the name of a csv file containing a table of "
                         "specific mutations per site you want to make. It "
-                        "should have one column ('site') with site numbers and"
-                        " one column ('mutant') with amino acid mutants to "
-                        "make at that site. Site 1 is the first codon in the "
-                        "uppercase sequence. If you want multiple mutations at"
-                        " the same site, there should be a separate row for "
-                        "each mutation.")
+                        "should have a column ('site') with site numbers, a "
+                        "column ('mutant') with amino acid mutant to "
+                        "make at that site, and a column ('num_codons') that "
+                        "specifies how many codon mutations to make at that "
+                        "site for that amino acid mutation. Site 1 is the "
+                        "first codon in the uppercase sequence. If you want "
+                        "multiple mutations at the same site, there should be "
+                        "a separate row for each mutation.")
     parser.add_argument('codon_frequency_csv',
                         help="the name of a csv file with a table of codon "
                         "frequencies to be used to determine which codons to "
@@ -94,6 +97,18 @@ def Parser():
                         help="prefix name to be added to each primer")
     parser.add_argument('outfile',
                         help='name of primer output file')
+    parser.add_argument('--codon_selection',
+                        help="How to choose which codons will be used for "
+                        "each mutation. Options are 'highest_frequency' to "
+                        "choose codons with the highest frequency in"
+                        " 'codon_frequency_csv', or 'random' to choose random "
+                        "codons in 'codon_frequency_csv'. Default is highest "
+                        "frequency.",
+                        default='highest_frequency')
+    parser.add_argument('--min_codon_frequency',
+                        help="minimum codon frequency required for a codon to "
+                        "be used",
+                        default=0)
     parser.add_argument('--startprimerlength',
                         type=int,
                         help="starting primer length",
@@ -127,7 +142,8 @@ def ReverseComplement(seq):
 
 
 def CreateMutForOligosVarLength(seq, mutations_csv, codon_frequency_csv,
-                                primerlength, prefix, maxprimertm,
+                                primerlength, prefix, codon_selection,
+                                min_codon_frequency, maxprimertm,
                                 minprimertm, maxlength, minlength):
     """Creates oligos to introduce specified amino acid mutations at each site.
 
@@ -138,12 +154,15 @@ def CreateMutForOligosVarLength(seq, mutations_csv, codon_frequency_csv,
     codon mutagenized and after the last codon mutagenized.
 
     *mutations_csv* : csv file containing a table with the mutations the
-    primers will make to seq. The table should have one column, 'site', with
-    site numbers, and one column, 'mutant', with the single letter amino acid
-    mutant to make at that site. Each site can have mulitple mutants, or none.
-    The site number should denote the number of the codon in the uppercase
-    gene, with the start codon being 1. If you want multiple mutations at the
-    same site, there should be a separate row for each mutation.
+    primers will make to seq. The table should have a column, 'site', with
+    site numbers, a column, 'mutant', with the single letter amino acid
+    mutant to make at that site, and a column, 'num_codons', with the number
+    of codon mutations to make for that amino acid at that site. The optional
+    argument 'codon_selection' be used to change how codons are selected.
+    Each site can have mulitple mutants, or none. The site number should
+    denote the number of the codon in the uppercase gene, with the start
+    codon being 1. If you want multiple mutations at the same site, there
+    should be a separate row for each mutation.
 
     *codon_frequency_csv* :  csv file containing a table with codon frequencies
     used to determine which codons sites will be mutated to. The table should
@@ -177,18 +196,12 @@ def CreateMutForOligosVarLength(seq, mutations_csv, codon_frequency_csv,
         raise ValueError("Upper case nucleotides not substring")
     if len(upperseq) % 3 != 0:
         raise ValueError("Length of upper case not multiple of 3")
-    ncodons = len(upperseq) // 3
 
     # Read in the mutations csv and make sure it is the right format
     df = pd.read_csv(mutations_csv)
     sites = df['site'].tolist()
     mutations = df['mutant'].tolist()
-    mutations_dict = {}
-    for i, site in enumerate(sites):
-        if site not in mutations_dict:
-            mutations_dict[site] = [mutations[i]]
-        else:
-            mutations_dict[site].append(mutations[i])
+    num_codons_list = df['num_codons'].tolist()
     # Make sure this is enough flanking sequence to make primers
     firstcodon = min(sites)
     lastcodon = max(sites)
@@ -206,46 +219,88 @@ def CreateMutForOligosVarLength(seq, mutations_csv, codon_frequency_csv,
     codons = df['codon'].tolist()
     frequencies = df['frequency'].tolist()
     back_t_dict = {}
-    for i, codon in enumerate(codons):
-        if aas[i] not in back_t_dict:
-            back_t_dict[aas[i]] = {}
-            back_t_dict[aas[i]][frequencies[i]] = codon
-        else:
-            back_t_dict[aas[i]][frequencies[i]] = codon
+    for (aa, codon, frequency) in zip(aas, codons, frequencies):
+        if float(frequency) >= float(min_codon_frequency):
+            if aa not in back_t_dict:
+                back_t_dict[aa] = {}
+                back_t_dict[aa][frequency] = codon
+            else:
+                back_t_dict[aa][frequency] = codon
     # Iterate through the codons and make the specific primers, with most
     # frequent codon. This could be changed later to have random option
     primers = []
-    for icodon in range(ncodons):
-        if icodon + 1 in mutations_dict:
-            for mutation in mutations_dict[icodon + 1]:
-                max_frequency = max(back_t_dict[mutation])
-                codon_insert = back_t_dict[mutation][max_frequency]
-                i = startupper + icodon * 3
-                five_prime = seq[i - initial_flanklength: i]
-                three_prime = seq[i + 3: i + 3 + initial_flanklength]
-                primer = f"{five_prime}{codon_insert}{three_prime}"
-                name = f"{prefix}-for-mut{icodon + 1}{mutation}"
-                primerseq = Seq(primer)
+    for (site, mutation, codons) in zip(sites, mutations, num_codons_list):
+        icodon = int(site) - 1
+        if codons > len(back_t_dict[mutation]):
+            raise ValueError((f"Too many codons requested for "
+                              f"{site}{mutation}: {codons}"))
+        if codon_selection == 'random':
+            frequencies = random.sample(back_t_dict[mutation], codons)
+        elif codon_selection == 'highest_frequency':
+            frequencies = sorted(back_t_dict[mutation],
+                                 reverse=True)[0: codons]
+        codon_inserts = [back_t_dict[mutation][frequency]
+                         for frequency in frequencies]
+        for codon_insert in codon_inserts:
+            i = startupper + icodon * 3
+            five_prime = seq[i - initial_flanklength: i]
+            three_prime = seq[i + 3: i + 3 + initial_flanklength]
+            primer = f"{five_prime}{codon_insert}{three_prime}"
+            name = f"{prefix}-for-mut{icodon + 1}{mutation}"
+            primerseq = Seq(primer)
 
-                TmNN = ('%0.2f' % mt.Tm_NN(primerseq, strict=False))
-                add_3 = True
-                minus_5 = True
-                flank5 = flank3 = initial_flanklength
-                if float(TmNN) > float(maxprimertm):
-                    while (float(TmNN) > float(maxprimertm) and
-                            len(primer) > minlength):
-                        if minus_5:
-                            flank5 -= 1
+            TmNN = ('%0.2f' % mt.Tm_NN(primerseq, strict=False))
+            add_3 = True
+            minus_5 = True
+            flank5 = flank3 = initial_flanklength
+            if float(TmNN) > float(maxprimertm):
+                while (float(TmNN) > float(maxprimertm) and
+                        len(primer) > minlength):
+                    if minus_5:
+                        flank5 -= 1
+                        five_prime = seq[i - (flank5): i]
+                        three_prime = seq[i + 3: i + 3 + flank3]
+                        primer = f"{five_prime}{codon_insert}{three_prime}"
+                        minus_5 = False
+                    else:
+                        flank3 -= 1
+                        five_prime = seq[i - (flank5): i]
+                        three_prime = seq[i + 3: i + 3 + flank3]
+                        primer = f"{five_prime}{codon_insert}{three_prime}"
+                        minus_5 = True
+                    if (seq.index(upperseq) + ((firstcodon - 1) * 3) <
+                            flank5):
+                        raise ValueError("Not enough 5' lower case "
+                                         "flanking nucleotides")
+                    if (lower_3_prime + (len(upperseq) -
+                            (lastcodon - 1) * 3) < flank3):
+                        raise ValueError("Not enough 3' lower case "
+                                         "flanking nucleotides")
+                    primerseq = Seq(primer)
+                    TmNN = ('%0.2f' % mt.Tm_NN(primerseq, strict=False))
+                    primerlength = len(primer)
+            else:
+                if float(TmNN) < float(minprimertm):
+                    while (float(TmNN) < float(minprimertm) and
+                            len(primer) < maxlength):
+                        if add_3:
+                            flank3 += 1
                             five_prime = seq[i - (flank5): i]
                             three_prime = seq[i + 3: i + 3 + flank3]
-                            primer = f"{five_prime}{codon_insert}{three_prime}"
-                            minus_5 = False
+                            primer = (f"{five_prime}{codon_insert}"
+                                      f"{three_prime}")
+                            add_3 = False
                         else:
-                            flank3 -= 1
+                            flank5 += 1
                             five_prime = seq[i - (flank5): i]
                             three_prime = seq[i + 3: i + 3 + flank3]
-                            primer = f"{five_prime}{codon_insert}{three_prime}"
-                            minus_5 = True
+                            primer = (f"{five_prime}{codon_insert}"
+                                      f"{three_prime}")
+                            add_3 = True
+                        primerseq = Seq(primer)
+                        TmNN = ('%0.2f' % mt.Tm_NN(primerseq,
+                                                   strict=False))
+                        primerlength = len(primer)
                         if (seq.index(upperseq) + ((firstcodon - 1) * 3) <
                                 flank5):
                             raise ValueError("Not enough 5' lower case "
@@ -254,42 +309,9 @@ def CreateMutForOligosVarLength(seq, mutations_csv, codon_frequency_csv,
                                 (lastcodon - 1) * 3) < flank3):
                             raise ValueError("Not enough 3' lower case "
                                              "flanking nucleotides")
-                        primerseq = Seq(primer)
-                        TmNN = ('%0.2f' % mt.Tm_NN(primerseq, strict=False))
-                        primerlength = len(primer)
                 else:
-                    if float(TmNN) < float(minprimertm):
-                        while (float(TmNN) < float(minprimertm) and
-                                len(primer) < maxlength):
-                            if add_3:
-                                flank3 += 1
-                                five_prime = seq[i - (flank5): i]
-                                three_prime = seq[i + 3: i + 3 + flank3]
-                                primer = (f"{five_prime}{codon_insert}"
-                                          f"{three_prime}")
-                                add_3 = False
-                            else:
-                                flank5 += 1
-                                five_prime = seq[i - (flank5): i]
-                                three_prime = seq[i + 3: i + 3 + flank3]
-                                primer = (f"{five_prime}{codon_insert}"
-                                          f"{three_prime}")
-                                add_3 = True
-                            primerseq = Seq(primer)
-                            TmNN = ('%0.2f' % mt.Tm_NN(primerseq,
-                                                       strict=False))
-                            primerlength = len(primer)
-                            if (seq.index(upperseq) + ((firstcodon - 1) * 3) <
-                                    flank5):
-                                raise ValueError("Not enough 5' lower case "
-                                                 "flanking nucleotides")
-                            if (lower_3_prime + (len(upperseq) -
-                                    (lastcodon - 1) * 3) < flank3):
-                                raise ValueError("Not enough 3' lower case "
-                                                 "flanking nucleotides")
-                    else:
-                        pass
-                primers.append((name, primer))
+                    pass
+            primers.append((name, primer))
     return primers
 
 
@@ -328,11 +350,15 @@ def main():
         raise IOError((f"Cannot find mutatcodon_frequency_csvions_csv "
                        f"{codon_frequency_csv}"))
 
+    codon_selection = args['codon_selection']
+    if codon_selection not in ['highest_frequency', 'random']:
+        raise ValueError(f"Invalid codon_selection: {codon_selection}")
+
     # Design forward mutation primers
     mutforprimers = CreateMutForOligosVarLength(sequence, mutations_csv,
-            codon_frequency_csv, primerlength, primerprefix,
-            args['maxprimertm'], args['minprimertm'], args['maxlength'],
-            args['minlength'])
+            codon_frequency_csv, primerlength, primerprefix, codon_selection,
+            args['min_codon_frequency'], args['maxprimertm'],
+            args['minprimertm'], args['maxlength'], args['minlength'])
     print(f"Designed {len(mutforprimers)} mutation forward primers.")
 
     # Design reverse mutation primers
