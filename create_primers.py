@@ -371,10 +371,12 @@ def main():
     print(f"This gives a total of {len(primers)} primers.")
 
     print(f"\nNow writing these primers to {outfile}")
-    f = open(outfile, 'w')
-    for primers in [mutforprimers, mutrevprimers]:
-        for (name, primer) in primers:
-            f.write(f"{name}, {primer}\r\n")
+    f = open(f"{outfile}_for.csv", 'w')
+    for (name, primer) in mutforprimers:
+        f.write(f"{name},{primer}\r\n")
+    f = open(f"{outfile}_rev.csv", 'w')
+    for (name, primer) in mutrevprimers:
+        f.write(f"{name},{primer}\r\n")
 
 
 main()
